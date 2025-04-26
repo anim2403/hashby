@@ -3,20 +3,22 @@ import requests
 from bs4 import BeautifulSoup
 import json
 import google.generativeai as genai
+import PyPDF2
+import io
 
-st.title("Web Content Scraper & Structured Extractor")
-st.write("Enter a URL to scrape its content and extract structured data using Gemini")
-
-gemini_api_key = st.sidebar.text_input("Enter Google Gemini API Key:", type="password")
-if gemini_api_key:
-    genai.configure(api_key=gemini_api_key)
-
-url = st.text_input("Enter URL:", "https://example.com")
+st.title("Content Scraper & Structured Extractor")
+st.write("Extract structured data from websites or PDFs using Gemini")
 
 if 'scraped_content' not in st.session_state:
     st.session_state.scraped_content = ""
 if 'structured_data' not in st.session_state:
     st.session_state.structured_data = {}
+
+gemini_api_key = st.sidebar.text_input("Enter Google Gemini API Key:", type="password")
+if gemini_api_key:
+    genai.configure(api_key=gemini_api_key)
+
+content_source = st.radio("Select content source:", ("Website URL", "PDF File"))
 
 def scrape_url(url):
     try:
@@ -37,16 +39,28 @@ def scrape_url(url):
     except Exception as e:
         return f"Error: {str(e)}", "Error"
 
-def extract_structured_data_with_gemini(text, page_title):
+def extract_text_from_pdf(uploaded_file):
+    try:
+        pdf_reader = PyPDF2.PdfReader(io.BytesIO(uploaded_file.read()))
+        text = ""
+        for page in pdf_reader.pages:
+            text += page.extract_text()
+        return text, uploaded_file.name
+    except Exception as e:
+        return f"Error: {str(e)}", "Error"
+
+def extract_structured_data_with_gemini(text, source_name):
     if not gemini_api_key:
         return {"error": "Please enter your Google Gemini API key in the sidebar"}
     max_length = 30000
     truncated_text = text[:max_length] if len(text) > max_length else text
     prompt = f"""
-    Extract structured information from the following webpage content.
-    PAGE TITLE: {page_title}
-    PAGE CONTENT: 
+    Extract structured information from the following {source_name} content.
+    
+    SOURCE: {source_name}
+    CONTENT: 
     {truncated_text}
+    
     From the following partial credit card information, extract a structured JSON list.
         Each card should have:
         - card_name
@@ -56,7 +70,8 @@ def extract_structured_data_with_gemini(text, page_title):
         - reward_structure
         - cashback_offers
         - other_attributes (optional)
-        Focus only on relevant card details. Ignore unrelated text..
+
+        Focus only on relevant card details. Ignore unrelated text.
     """
     try:
         model = genai.GenerativeModel('models/gemini-1.5-pro')
@@ -79,27 +94,48 @@ def extract_structured_data_with_gemini(text, page_title):
     except Exception as e:
         return {"error": str(e)}
 
-tab1, tab2 = st.tabs(["Scraper", "Structured Data"])
+tab1, tab2 = st.tabs(["Content Extractor", "Structured Data"])
 
 with tab1:
-    if st.button("Scrape Content"):
-        with st.spinner("Scraping content..."):
-            st.session_state.scraped_content, page_title = scrape_url(url)
-            if not st.session_state.scraped_content.startswith("Error"):
-                st.success("Content scraped successfully!")
-                if gemini_api_key:
-                    with st.spinner("Extracting structured data with Gemini..."):
-                        st.session_state.structured_data = extract_structured_data_with_gemini(
-                            st.session_state.scraped_content, 
-                            page_title
-                        )
-                    st.success("Structured extraction complete!")
+    if content_source == "Website URL":
+        url = st.text_input("Enter URL:", "https://example.com")
+        if st.button("Scrape Content"):
+            with st.spinner("Scraping content..."):
+                st.session_state.scraped_content, page_title = scrape_url(url)
+                if not st.session_state.scraped_content.startswith("Error"):
+                    st.success("Content scraped successfully!")
+                    if gemini_api_key:
+                        with st.spinner("Extracting structured data with Gemini..."):
+                            st.session_state.structured_data = extract_structured_data_with_gemini(
+                                st.session_state.scraped_content, 
+                                page_title
+                            )
+                        st.success("Structured extraction complete!")
+                    else:
+                        st.warning("Enter Google Gemini API key in sidebar to extract structured data")
                 else:
-                    st.warning("Enter Google Gemini API key in sidebar to extract structured data")
-            else:
-                st.error(st.session_state.scraped_content)
+                    st.error(st.session_state.scraped_content)
+    else:
+        uploaded_file = st.file_uploader("Upload PDF file", type=["pdf"])
+        if uploaded_file and st.button("Extract PDF Content"):
+            with st.spinner("Extracting text from PDF..."):
+                st.session_state.scraped_content, file_name = extract_text_from_pdf(uploaded_file)
+                if not st.session_state.scraped_content.startswith("Error"):
+                    st.success("PDF content extracted successfully!")
+                    if gemini_api_key:
+                        with st.spinner("Extracting structured data with Gemini..."):
+                            st.session_state.structured_data = extract_structured_data_with_gemini(
+                                st.session_state.scraped_content, 
+                                file_name
+                            )
+                        st.success("Structured extraction complete!")
+                    else:
+                        st.warning("Enter Google Gemini API key in sidebar to extract structured data")
+                else:
+                    st.error(st.session_state.scraped_content)
+
     if st.session_state.scraped_content and not st.session_state.scraped_content.startswith("Error"):
-        st.subheader("Scraped Content")
+        st.subheader("Extracted Content")
         st.text_area("Content", st.session_state.scraped_content, height=300)
 
 with tab2:
